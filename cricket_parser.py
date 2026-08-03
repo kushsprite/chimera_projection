@@ -68,6 +68,7 @@ def parse_match(match):
     player_cards = []
     wicket_cards = []
     scorecards = []
+    season_performance = []
     info = match["info"]
     innings = match["innings"]
 
@@ -78,6 +79,8 @@ def parse_match(match):
     toss_winner = normalize_team_name(info.get("toss",{}).get("winner","Unknown"))
     toss_decision = info.get("toss",{}).get("decision","Unknown")
     all_teams = [normalize_team_name(t) for t in info["players"].keys()]
+    running_season_perfromance = {}
+    
 
 
 
@@ -92,13 +95,23 @@ def parse_match(match):
             runs_conceded = 0
             balls_bowled = 0
             maidens = 0
+            batting_position_inn1 = {}
+            batting_position_inn2 = {}
 
-
-            for innings_data in innings:
+            for i, innings_data in enumerate(innings, start = 1):
+                if i == 1:
+                    positions = batting_position_inn1
+                else:
+                    positions = batting_position_inn2
+                
                 for over in innings_data["overs"]:
                     over_balls = 0
                     over_runs = 0
+                    
                     for delivery in over["deliveries"]:
+                        batter = delivery["batter"]
+                        if batter  not in positions:
+                                 positions[batter] = len(positions) + 1
                         if delivery["batter"] == player:
                             is_wide = delivery.get("extras", {}).get("wides", 0) > 0
                             runs_scored += delivery["runs"]["batter"]
@@ -125,7 +138,7 @@ def parse_match(match):
                                     wickets += 1
                     if over_runs == 0 and over_balls == 6:
                         maidens += 1
-
+            bat_position = batting_position_inn1.get(player, batting_position_inn2.get(player, 0))
             opposition = all_teams[1] if team_name == all_teams[0] else all_teams[0]
 
             scorecard = {
@@ -143,7 +156,8 @@ def parse_match(match):
                 "fours": fours,
                 "sixes": sixes,
                 "strike_rate": round((runs_scored / balls_faced) * 100, 2) if balls_faced > 0 else 0,
-                "fantasy_points": compute_batting_points(runs_scored, balls_faced, fours, sixes)
+                "fantasy_points": compute_batting_points(runs_scored, balls_faced, fours, sixes),
+                "batting_position": bat_position
             }
             scorecards.append(scorecard)
 
@@ -177,6 +191,7 @@ def parse_match(match):
             "fours": scorecard["fours"],
             "sixes": scorecard["sixes"],
             "strike_rate": scorecard["strike_rate"],
+            "batting_position":scorecard["batting_position"],
             "wickets": wicket_card["wicket"],
             "runs_conceded": wicket_card["runs_given"],
             "balls_bowled": wicket_card["balls_delivered"],
