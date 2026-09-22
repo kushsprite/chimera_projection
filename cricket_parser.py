@@ -8,13 +8,9 @@ TEAM_NAME_MAP = {
     "Deccan Chargers": "Deccan Chargers",  # no change, just documenting
 }
 
-def normalize_team_name(name: str)-> str:
-    return TEAM_NAME_MAP.get(name,name)
+def normalize_team_name(name: str) -> str:
+    return TEAM_NAME_MAP.get(name, name)
 
-
-
-with open("data/raw/IPL Match Data/335982.json") as f:
-    match = json.load(f)
 
 def compute_batting_points(runs: int, balls: int, fours: int, sixes: int) -> int:
     current_points = 4 + runs * 1 + fours * 1 + sixes * 2
@@ -37,6 +33,7 @@ def compute_batting_points(runs: int, balls: int, fours: int, sixes: int) -> int
         elif strike_rate <= 80:
             current_points -= 2
     return current_points
+
 
 def compute_bowling_points(wickets: int, runs_conceded: int, balls_bowled: int, maidens: int) -> int:
     points = 0
@@ -63,8 +60,7 @@ def compute_bowling_points(wickets: int, runs_conceded: int, balls_bowled: int, 
     return points
 
 
-
-def parse_match(match, match_id = "Unknown"):
+def parse_match(match, match_id="Unknown"):
     player_cards = []
     wicket_cards = []
     scorecards = []
@@ -116,12 +112,20 @@ def parse_match(match, match_id = "Unknown"):
             runs_conceded = 0
             balls_bowled = 0
             maidens = 0
+            stumpings = 0
 
             for innings_data in innings:
                 for over in innings_data["overs"]:
                     over_balls = 0
                     over_runs = 0
                     for delivery in over["deliveries"]:
+                        # --- stumpings: independent of batter/bowler role, runs for every delivery ---
+                        for wicket in delivery.get("wickets", []):
+                            if wicket["kind"] == "stumped":
+                                for fielder in wicket.get("fielders", []):
+                                    if fielder.get("name") == player:
+                                        stumpings += 1
+
                         if delivery["batter"] == player:
                             is_wide = delivery.get("extras", {}).get("wides", 0) > 0
                             runs_scored += delivery["runs"]["batter"]
@@ -183,11 +187,12 @@ def parse_match(match, match_id = "Unknown"):
                 "Bowling_economy": round((runs_conceded / balls_bowled) * 6, 2) if balls_bowled > 0 else 0,
                 "total_wickets": total_wickets, "player_innings": player_innings,
                 "fantasy_points": compute_bowling_points(wickets, runs_conceded, balls_bowled, maidens),
+                "stumpings": stumpings,
             })
 
     for scorecard, wicket_card in zip(scorecards, wicket_cards):
         player_cards.append({
-            "match_id": "match_id",
+            "match_id": match_id,  # fixed: was the literal string "match_id"
             "player": scorecard["player"], "team": scorecard["team"],
             "opposition": scorecard["opposition"], "venue": scorecard["venue"],
             "city": scorecard["city"], "date": scorecard["date"], "season": scorecard["season"],
@@ -200,34 +205,18 @@ def parse_match(match, match_id = "Unknown"):
             "economy": wicket_card["Bowling_economy"], "total_wickets": scorecard.get("total_wickets", wicket_card["total_wickets"]),
             "player_innings": scorecard["player_innings"], "team_total": scorecard["team_total"],
             "total_fantasy_points": scorecard["fantasy_points"] + wicket_card["fantasy_points"],
+            "stumpings": wicket_card["stumpings"],  # fixed: was the loose outer-scope variable
         })
 
     return player_cards
 
 
+if __name__ == "__main__":
+    with open("data/raw/IPL Match Data/1426261.json") as f:
+        match = json.load(f)
 
+    player_cards = parse_match(match, match_id="1426261")
 
-
-player_cards = parse_match(match)
-print(json.dumps(player_cards, indent=2))
-    
-
-
-
-
-        
-
-
-
-
-
-
-
-
-
-
-    
-
-
-
-
+    for card in player_cards:
+        if card["player"] == "H Klaasen":
+            print(card["stumpings"])
