@@ -1,0 +1,22 @@
+# Core data handling
+pandas>=2.0
+numpy>=1.24
+
+# Modeling
+torch>=2.1
+lightgbm>=4.0
+xgboost>=2.0
+
+# Team selection (integer linear programming)
+pulp>=2.7
+
+# Weather enrichment (Open-Meteo API)
+requests>=2.31
+
+# LLM explainer (Gemini)
+google-genai>=0.3
+python-dotenv>=1.0
+
+# Notebook execution
+jupyter>=1.0
+ipykernel>=6.25
