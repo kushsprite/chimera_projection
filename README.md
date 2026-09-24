@@ -1,111 +1,144 @@
-# Chimera — AI-Powered Cricket Fantasy Team Optimization Platform
+# Chimera: AI-Powered Cricket Fantasy Team Optimization Platform
 
-Chimera turns raw IPL ball-by-ball data into a fantasy XI. It parses match data into
-per-player fantasy scores, engineers features (form, venue, opposition, weather),
-trains a LightGBM + LSTM ensemble to predict next-match fantasy points, picks an
-optimal 11-player team under standard fantasy-league constraints (credits, role mix,
-max-per-team) using integer linear programming, and generates a natural-language
-explanation of the pick with the Gemini API.
+Chimera turns raw IPL ball-by-ball data into a fantasy XI for an upcoming match. Give it
+the two squads, the venue and the date; it builds each player's features from their
+match history, predicts fantasy points with a LightGBM + LSTM ensemble, picks the optimal
+11 under fantasy-league rules with integer programming, and explains the pick using live
+pre-match news retrieved at request time (online RAG).
 
-## Project status
+```
+squads + venue + date
+   -> live features (form, venue, opposition, batting slot, weather forecast)
+   -> LightGBM + LSTM ensemble -> projected points per player
+   -> PuLP optimizer -> XI with captain / vice-captain
+   -> news search -> chunk -> embed -> retrieve -> LLM -> cited explanation
+```
 
-This section reflects what's actually been run and verified, not just written —
-checked directly against each notebook's saved execution history.
+## Results
 
-**Working end-to-end, with confirmed output:**
-- Match parsing (`src/cricket_parser.py` + `02_build_dataset.ipynb`) → `data/processed/player_match_stats.csv`
-- Feature engineering + weather enrichment (`03_feature_engineering.ipynb`) → `data/processed/player_match_features.csv`, `models/lgbm_baseline.pkl`, `models/lgbm_weather.pkl`
-- LSTM sequence model (`04_sequence_model.ipynb`) → `models/best_lstm.pt`, checkpointed automatically during training
-- Team optimizer (`06_team_optimizer.ipynb`) → demonstrated successfully on two real matches, with real ILP output (11-player team, captain/vice-captain, credits used, total points)
+Evaluated on every 2025-26 match (148 matches, 3,542 player rows), trained on 2008-2024:
 
-**Not completed, or not yet verified:**
+| Setting | Ensemble MAE |
+|---|---|
+| Naive baseline (last-5 average) | 23.74 |
+| Offline, actual batting order and toss known | **20.99** |
+| **Live**, batting order estimated, toss unknown | **21.78** |
 
-1. **Ensemble finalization (`05_ensemble.ipynb`) is unconfirmed.** The cells that align
-   the LSTM and LightGBM predictions, blend them, sweep blend weights, and actually
-   save `models/lgbm_final.pkl`, `models/lstm_final.pt`, and `models/ensemble_config.json`
-   show no execution history in the notebook as currently saved. `06_team_optimizer.ipynb`
-   does load `lgbm_final.pkl` successfully, so the file likely exists locally from an
-   earlier run — but there's no reproducible record that the *current* version of this
-   notebook regenerates it. **Needs a clean, top-to-bottom re-run to confirm.**
-2. **LLM explainer (`07_llm_explainer.ipynb`) has never been run.** Zero of its 9 cells
-   have any execution history — the Gemini integration, prompt construction, and
-   retry/backoff logic are fully written but completely untested end-to-end. Needs a
-   `GEMINI_API_KEY` and a first real run.
-3. **No evaluation at scale.** The optimizer has been demonstrated on two individual
-   sample matches, not backtested across a held-out season. There's no accuracy or
-   ROI metric anywhere in the repo yet (e.g. predicted vs. actual fantasy points across
-   many matches).
-4. **`01_explore.ipynb` has never been run.** Low-stakes — it's a scratch notebook with
-   no required downstream output — but worth knowing it's not a working example as-is.
-5. **No application layer.** Everything above lives in notebooks. There's no backend
-   API, frontend, or deployment configuration anywhere in the repo — no server, no UI,
-   no Dockerfile, no CI/CD, no cloud config. The repo right now is 100% Python/ML
-   pipeline; nothing here demonstrates Java, TypeScript, React/Angular/Node/Spring
-   Boot, or a cloud deployment yet.
-6. **Minor cleanup:**
-   - `02_build_dataset.ipynb` (cell 11) writes to `player_match_features.csv` in
-     addition to `player_match_stats.csv` — looks like a leftover copy/paste from
-     notebook 3's save cell. Harmless (notebook 3 overwrites it) but worth removing.
-   - Several inspection-only cells (column dumps, shape/date checks) across notebooks
-     2, 3, 4, and 6 have no execution history. No functional impact, but it means the
-     notebooks as committed don't reflect a single clean run top-to-bottom — worth a
-     fresh run before treating any of them as a reference example.
+The live number is the honest one for real use. The gap comes almost entirely from
+batting position (the model's most important feature): before the toss it is estimated
+as the mode of the player's last 5 matches, which is exactly right 55% of the time (the
+best of several estimators tested). Passing the announced batting order recovers the
+offline accuracy. The unknown toss costs about 0.01; predictions average both outcomes.
 
-## Pipeline
+`scripts/validate_live_features.py` reproduces all three numbers.
 
-The project is a sequence of notebooks, run in order. Each stage reads the previous
-stage's output from `data/` or `models/`.
+## Quick start
 
-| Stage | Notebook | Input | Output | Status |
-|---|---|---|---|---|
-| 1. Explore | `01_explore.ipynb` | one raw match JSON | sanity checks on the Cricsheet schema | ❌ never run |
-| 2. Build dataset | `02_build_dataset.ipynb` | `data/raw/IPL Match Data/*.json` (via `src/cricket_parser.py`) | `data/processed/player_match_stats.csv` | ✅ confirmed |
-| 3. Feature engineering | `03_feature_engineering.ipynb` | `player_match_stats.csv` + weather API | `data/processed/player_match_features.csv`, `models/lgbm_baseline.pkl`, `models/lgbm_weather.pkl` | ✅ confirmed |
-| 4. Sequence model | `04_sequence_model.ipynb` | `player_match_features.csv` | `models/best_lstm.pt` | ✅ confirmed |
-| 5. Ensemble | `05_ensemble.ipynb` | features + baseline models | `models/lgbm_final.pkl`, `models/lstm_final.pt`, `models/ensemble_config.json` | ⚠️ needs re-run to confirm |
-| 6. Team optimizer | `06_team_optimizer.ipynb` | ensemble models + `data/processed/player_credits.csv` | optimal fantasy XI (ILP via PuLP) | ✅ confirmed on 2 sample matches |
-| 7. LLM explainer | `07_llm_explainer.ipynb` | optimizer output | natural-language writeup (Gemini API) | ❌ never run |
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env                    # add GROQ_API_KEY and GEMINI_API_KEY (both free)
+python scripts/smoke_test_live.py       # checks weather, news, embeddings, LLM connections
+python scripts/predict_match.py data/fixtures/upcoming.example.json
+```
 
-`src/cricket_parser.py` holds the shared logic: parsing a raw Cricsheet match into
-per-player "cards" and computing Dream11-style batting/bowling fantasy points. This
-file is complete — no TODOs or stubs.
+Or open `notebooks/08_live_pipeline.ipynb`, which walks through each stage.
+
+Requires `data/processed/` and `models/` (see "Getting the data"). No keys are strictly
+required: without them, retrieval uses TF-IDF and the explanation is a plain summary.
+
+Names can be written normally ("Virat Kohli", "Varun Chakravarthy"); they are matched to
+Cricsheet's forms ("V Kohli", "CV Varun"), and uncertain matches come back as warnings.
+Teams accept abbreviations (RCB, KKR, MI...), venues accept partial names ("Chinnaswamy").
+Per-player overrides in a squad: `role` (useful for debutants), `batting_position` (from
+the announced lineup), `credit` (the real app's price).
+
+## How the live pipeline stays faithful to training
+
+A model is only as good as the features it's served. Training computed features with
+`groupby` + `shift(1)` + rolling windows over the whole dataset; the live builder
+(`src/chimera/features.py`) computes each one directly from a player's matches before
+the match date. To prove they're the same, `validate_live_features.py` rebuilds features
+for every test match and compares them to the training CSV: **all features identical**,
+and the live path reproduces the verified 20.99 MAE exactly. Both checks also run in the
+test suite.
+
+Training quirks are replicated deliberately, not fixed, because the models learned them:
+`rolling_std_fantasy_10` uses a 5-match window, the RCB home-city mapping treats
+"Bangalore" rows as away, and missing values use the exact fill constants from training.
+
+## Online RAG
+
+Document sources share one interface, so adding a source is one class
+(`src/chimera/rag/sources.py`):
+
+| Source | Key | What you get |
+|---|---|---|
+| Google News RSS | none | headlines and summaries for the match window |
+| GNews API | `GNEWS_API_KEY` (optional) | real article URLs, full text fetched |
+| URLs you pass | none | full article text (e.g. a Cricbuzz preview) |
+| Manual text | none | anything you paste |
+
+Documents are filtered to the week before the match and to the two teams, deduplicated,
+chunked (300 words, 50 overlap), embedded with Gemini `gemini-embedding-2`, and retrieved
+with several focused queries (pitch, weather/dew, team news, key players). Embeddings are
+cached on disk by content hash, so the same text never costs quota twice. If Gemini is
+unavailable, retrieval falls back to a local TF-IDF index automatically.
+
+Generation uses Groq (`openai/gpt-oss-120b`) with Gemini as fallback. Because providers
+retire model names often, the code discovers an available model if the configured one
+disappears. The prompt includes each player's role and projected batting slot so the
+model doesn't guess them, sources are numbered so claims are cited as `[n]`, and the
+"projections, not guarantees" caveat is added by code rather than generated.
+
+## Keeping data current
+
+Live predictions use form up to the latest match in the history. After new matches:
+
+```bash
+# download the latest IPL JSONs from cricsheet.org into data/raw/IPL Match Data/
+python scripts/update_history.py
+```
+
+New matches go to `data/processed/new_matches.csv`, which the live pipeline reads
+alongside the training data. The training CSV and models are not modified.
 
 ## Repo structure
 
 ```
 chimera_projection/
-├── README.md
-├── requirements.txt
-├── .gitignore
-├── notebooks/              # 01–07, run in order
 ├── src/
-│   └── cricket_parser.py   # match parsing + fantasy point scoring
-├── data/
-│   ├── raw/                # untracked — raw Cricsheet match JSON
-│   └── processed/          # untracked — CSVs/JSON produced by notebooks 02–03
-└── models/                 # untracked — trained model artifacts (.pkl / .pt)
+│   ├── cricket_parser.py        # match parsing + fantasy scoring
+│   └── chimera/
+│       ├── config.py            # paths (resolved from repo root) and settings
+│       ├── constants.py         # training constants, team aliases
+│       ├── data_store.py        # history, credits, player/team/venue resolution
+│       ├── features.py          # live feature builder
+│       ├── weather.py           # forecast/archive/cache/climatology
+│       ├── models.py            # LightGBM + LSTM ensemble
+│       ├── optimizer.py         # PuLP team selection
+│       ├── engine.py            # ties it all together
+│       └── rag/                 # sources, chunking, embeddings, retriever, llm, explainer
+├── scripts/                     # validation, smoke test, CLI, history updates
+├── tests/                       # 32 tests (pytest)
+├── notebooks/                   # 01-07 development pipeline, 08 live pipeline walkthrough
+├── data/                        # untracked except the fixtures example
+└── models/                      # untracked
 ```
 
-## Setup
+## Tests
 
 ```bash
-git clone <repo-url>
-cd chimera_projection
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pytest -q
 ```
 
-Create a `.env` file in the repo root for the LLM explainer (notebook 07):
-
-```
-GEMINI_API_KEY=your_key_here
-```
+Covers feature fidelity against training, MAE reproduction, toss averaging, name
+resolution, every optimizer rule, and the RAG components (against responses shaped like
+the real services). Tests never call paid or rate-limited APIs.
 
 ## Getting the data
 
-`data/raw/` is not tracked in git (see below), so it needs to be populated before
-running the pipeline. The notebooks expect IPL match files in Cricsheet's JSON
-format, one file per match, at `data/raw/IPL Match Data/*.json`:
+The notebooks expect Cricsheet IPL JSON files at `data/raw/IPL Match Data/*.json`:
 
 ```bash
 mkdir -p data/raw
@@ -113,40 +146,31 @@ curl -o ipl.zip https://cricsheet.org/downloads/ipl_json.zip
 unzip ipl.zip -d "data/raw/IPL Match Data"
 ```
 
-Cricsheet's data is CC BY 4.0 — if you publish anything built from it, credit
-Cricsheet.org.
+Then run notebooks 02-06 to produce `data/processed/` and `models/`. Cricsheet's data is
+CC BY 4.0; credit Cricsheet.org if you publish anything built from it.
 
-Once `data/raw/` is populated, run `notebooks/02_build_dataset.ipynb` through
-`07_llm_explainer.ipynb` in order to regenerate everything in `data/processed/`
-and `models/`. Given the status notes above, notebook 5 in particular should be
-run fresh from a clean kernel rather than assumed to still be valid.
+`data/` and `models/` are gitignored: the raw archive is thousands of files, model
+binaries don't diff well, and both are regenerable from the notebooks.
 
-## Why `data/` and `models/` aren't in the repo
+## Known limitations
 
-Both are gitignored on purpose:
-
-- **Size and file type.** The raw match archive is thousands of small JSON files,
-  and the trained artifacts (`best_lstm.pt`, the LightGBM `.pkl` files) are binary
-  blobs that don't diff or compress well in git — they'd bloat every clone.
-- **They're regenerable.** Everything in `data/processed/` and `models/` is a
-  deterministic output of `notebooks/02`–`06` given the raw data, so committing
-  them is duplicating what the code already reproduces.
-- **Licensing.** The raw data comes from a third party (Cricsheet, CC BY 4.0), so
-  redistributing a copy of it inside a separate repo is best avoided even though
-  the license permits it, if attribution isn't wired into this repo yet.
-
-If you'd rather have the data/model files versioned instead of regenerated, the
-usual options are Git LFS for the model binaries, or a tool like DVC pointing at
-cloud storage for both `data/` and `models/` — happy to wire either of those in if
-you want it.
+- **Breakout performances are unpredictable by construction.** Every feature is
+  historical. In the 2025 opener Krunal Pandya took 3/29 and was Player of the Match;
+  the model ranked him last of 24.
+- **Batting order before the toss is a guess.** See Results; pass announced positions
+  when you have them.
+- **Weather features slightly hurt offline MAE** (21.21 vs 20.94 for LightGBM). City-level
+  averages over 15:00-21:00 are probably too coarse to capture dew. Kept because live
+  conditions matter to users, but the trade-off is measured.
+- **Google News RSS gives headlines, not full articles**, unless the optional
+  `googlenewsdecoder` package is installed. GNews or pasted URLs give full text.
+- **The LLM can still introduce outside knowledge.** Grounding and prompt rules reduce it;
+  they don't eliminate it.
+- **Credits are synthetic**, derived from career stats and form, not a real app's prices.
 
 ## Tech stack
 
-- **Data:** pandas, NumPy, Cricsheet ball-by-ball JSON
-- **Weather enrichment:** Open-Meteo geocoding + historical weather APIs
-- **Modeling:** LightGBM (XGBoost also available), PyTorch (LSTM), simple ensemble
-- **Team selection:** PuLP (integer linear programming) under credit/role/team-count constraints
-- **Explanation layer:** Gemini API (`google-genai`)
+Python, pandas, NumPy, LightGBM, PyTorch, PuLP, Gemini API (embeddings), Groq API
+(generation), Open-Meteo (weather), Google News RSS / GNews (news).
 
-Currently Python-only end to end. No frontend, backend service, or cloud deployment
-exists in this repo yet — see "Project status" above.
+Not yet built: backend API, frontend, Docker, cloud deployment.

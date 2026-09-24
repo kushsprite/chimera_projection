@@ -5,18 +5,29 @@ numpy>=1.24
 # Modeling
 torch>=2.1
 lightgbm>=4.0
-xgboost>=2.0
+scikit-learn>=1.3      # needed to unpickle the LightGBM sklearn-API model
+xgboost>=2.0           # used in 03_feature_engineering for the comparison model
 
 # Team selection (integer linear programming)
-pulp>=2.7
+pulp>=2.7,<4
 
-# Weather enrichment (Open-Meteo API)
+# HTTP: weather, news, article fetching
 requests>=2.31
 
-# LLM explainer (Gemini)
-google-genai>=0.3
+# LLM + embeddings
+google-genai>=1.0      # Gemini embeddings (and fallback generation)
+groq>=0.9              # primary generation
 python-dotenv>=1.0
 
-# Notebook execution
+# Tests
+pytest>=8
+
+# Notebooks
 jupyter>=1.0
 ipykernel>=6.25
+nbformat>=5.9
+
+# Optional, better article extraction for RAG:
+#   trafilatura>=1.8
+# Optional, resolves Google News redirect links to full articles:
+#   googlenewsdecoder>=0.1

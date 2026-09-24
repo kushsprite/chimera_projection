@@ -1,3 +1,10 @@
+# Data: ignore everything except the example fixtures file
+data/*
+!data/fixtures/
+data/fixtures/*
+!data/fixtures/upcoming.example.json
+
+
 data/
 .venv/
 .DS_Store
