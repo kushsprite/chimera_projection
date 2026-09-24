@@ -212,7 +212,7 @@ def parse_match(match, match_id="Unknown"):
 
 
 if __name__ == "__main__":
-    with open("data/raw/IPL Match Data/1426261.json") as f:
+    with open("../data/raw/IPL Match Data/1426261.json") as f:
         match = json.load(f)
 
     player_cards = parse_match(match, match_id="1426261")
